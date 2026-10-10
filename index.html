@@ -138,10 +138,11 @@ async function initAudio() {
   if (E) MUSIC = E.music; else try { MUSIC = await (await fetch('assets/music.json')).json(); } catch (e) {}
   const b64ab = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
   const decode = ab => new Promise((ok, bad) => { const p = AC.decodeAudioData(ab, ok, bad); if (p && p.then) p.then(ok, bad); });
-  for (const n of ['lullaby', 'theme']) {
-    (E ? Promise.resolve(b64ab(E[n])) : fetch('assets/' + n + '.mp3').then(r => r.arrayBuffer())).then(decode).then(b => { BUF[n] = b; if (pendingMusic === n) playMusic(n); }).catch(() => {});
-  }
+  const load = n => (E ? Promise.resolve(b64ab(E[n])) : fetch('assets/' + n + '.mp3').then(r => r.arrayBuffer())).then(decode).then(b => { BUF[n] = b; if (pendingMusic === n) playMusic(n); }).catch(() => {});
+  load('lullaby').then(() => load('theme'));
 }
+// Start unpacking the music as soon as the page opens (the audio stays silent until the first tap).
+setTimeout(() => { try { initAudio(); } catch (e) {} }, 0);
 let pendingMusic = null, currentMusic = null;
 function playMusic(name, fadeIn = 0.05) {
   stopMusic();
@@ -364,6 +365,7 @@ function restart() { introSeen = true; newGame(); G.introRun = 1.8; G.gateX = -6
 function update(dt) {
   T += dt; stateT += dt;
   if (STATE === 'intro') {
+    if (!BUF.lullaby && stateT < 0.05 && (G._hold = (G._hold || 0) + dt) < 4) { stateT = 0; return; }
     if (stateT > 5.0 && !G._alarm) { G._alarm = 1; stopMusic(0.05); SFX.scratch(); }
     if (stateT > 5.1 && Math.floor(stateT * 1.4) !== G._b) { G._b = Math.floor(stateT * 1.4); if (stateT < 8.0) SFX.beep(); }
     if (stateT > 8.3 && !G._theme) { G._theme = 1; playMusic('theme', 0.05); }
