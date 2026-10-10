@@ -127,22 +127,52 @@ const UMB = ['..rrrr..', '.rrrrrr.', 'rrrrrrrr', 'r..k...r', '...k....', '...k..
 // ---------- audio ----------
 let AC = null, master = null, musicGain = null, sfxGain = null, NOISE = null;
 const BUF = {}; let musicSrc = null, MUSIC = { loopStart: 34.909, loopEnd: 69.818 };
-async function initAudio() {
+// Music is decoded as soon as the page opens with an OfflineAudioContext, which phones allow
+// without a tap. The real AudioContext is only created inside the first tap (what iPhones need),
+// and the decoded buffers are shared with it.
+let preloadStarted = false;
+function preloadMusic() {
+  if (preloadStarted) return; preloadStarted = true;
+  const E = window.EMBED;
+  const O = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  let DC = null;
+  try { DC = O ? new O(2, 44100, 44100) : null; } catch (e) { DC = null; }
+  const ctx = () => DC || AC;
+  const b64ab = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+  const decode = ab => new Promise((ok, bad) => { const c = ctx(); if (!c) { bad(new Error('no audio context')); return; } const p = c.decodeAudioData(ab, ok, bad); if (p && p.then) p.then(ok, bad); });
+  const load = n => (E ? Promise.resolve(b64ab(E[n])) : fetch('assets/' + n + '.mp3').then(r => r.arrayBuffer())).then(decode).then(b => { BUF[n] = b; if (pendingMusic === n && AC) playMusic(n); }).catch(() => { preloadStarted = false; });
+  const start = () => { (E ? Promise.resolve() : fetch('assets/music.json').then(r => r.json()).then(m => { MUSIC = m; }).catch(() => {})).then(() => load('lullaby')).then(() => load('theme')); };
+  if (window.EMBED) MUSIC = window.EMBED.music;
+  if (DC) start(); else preloadStarted = false; // no offline decoder: initAudio() decodes after the first tap
+}
+function initAudio() {
   if (AC) return;
   AC = new (window.AudioContext || window.webkitAudioContext)();
   master = AC.createGain(); master.gain.value = 0.9; master.connect(AC.destination);
   musicGain = AC.createGain(); musicGain.gain.value = 0.55; musicGain.connect(master);
   sfxGain = AC.createGain(); sfxGain.gain.value = 0.5; sfxGain.connect(master);
   NOISE = AC.createBuffer(1, AC.sampleRate, AC.sampleRate); const d = NOISE.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  // iPhone: play one silent sample inside the tap so the context really starts.
+  try { const b = AC.createBuffer(1, 1, 22050), src = AC.createBufferSource(); src.buffer = b; src.connect(AC.destination); src.start(0); } catch (e) {}
+  if (!preloadStarted) { preloadStarted = false; preloadMusic(); if (!preloadStarted) { preloadStarted = true; fallbackDecode(); } }
+}
+function fallbackDecode() {
   const E = window.EMBED;
-  if (E) MUSIC = E.music; else try { MUSIC = await (await fetch('assets/music.json')).json(); } catch (e) {}
   const b64ab = b => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
   const decode = ab => new Promise((ok, bad) => { const p = AC.decodeAudioData(ab, ok, bad); if (p && p.then) p.then(ok, bad); });
   const load = n => (E ? Promise.resolve(b64ab(E[n])) : fetch('assets/' + n + '.mp3').then(r => r.arrayBuffer())).then(decode).then(b => { BUF[n] = b; if (pendingMusic === n) playMusic(n); }).catch(() => {});
   load('lullaby').then(() => load('theme'));
 }
-// Start unpacking the music as soon as the page opens (the audio stays silent until the first tap).
-setTimeout(() => { try { initAudio(); } catch (e) {} }, 0);
+setTimeout(() => { try { preloadMusic(); } catch (e) {} }, 0);
+// Keep resuming on early gestures until the audio is actually running (some phones need a second tap event).
+function unlockAudio() {
+  try {
+    if (!AC) initAudio();
+    if (AC.state !== 'running') AC.resume();
+    if (AC.state === 'running') for (const ev of ['touchend', 'pointerup', 'click', 'keydown']) removeEventListener(ev, unlockAudio, true);
+  } catch (e) {}
+}
+for (const ev of ['touchend', 'pointerup', 'click', 'keydown']) addEventListener(ev, unlockAudio, true);
 let pendingMusic = null, currentMusic = null;
 function playMusic(name, fadeIn = 0.05) {
   stopMusic();
